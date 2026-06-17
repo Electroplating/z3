@@ -325,7 +325,8 @@ namespace opt {
                 expr* asms[1] = { bound };
                 lbool check = m_s->check_sat(1, asms);
                 if (check == l_true) {
-                    last_objective *= rational(2);
+                    delta_per_step *= rational(2);
+                    last_objective += delta_per_step;
                     vector<expr_ref_vector> cores;
                     m_s->get_lra_conflict_cores(cores);
                     continue;
