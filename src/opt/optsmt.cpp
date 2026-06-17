@@ -326,6 +326,8 @@ namespace opt {
                 lbool check = m_s->check_sat(1, asms);
                 if (check == l_true) {
                     last_objective *= rational(2);
+                    vector<expr_ref_vector> cores;
+                    m_s->get_lra_conflict_cores(cores);
                     continue;
                 }
                 else if (check == l_false) {
@@ -333,6 +335,11 @@ namespace opt {
                     expr_ref best_blk(m);
                     expr_ref_vector base_asms(m);
                     while (m_s->best_value_after_bound_unsat(obj_index, bound, base_asms, best, best_blk, 32));
+                    expr_ref best_bound(m);
+                    best_bound = m_s->mk_ge(obj_index, best);
+                    expr* best_asms[1] = { best_bound };
+                    SASSERT(m_s->check_sat(1, best_asms) == l_true);
+                    m_s->get_model(m_model);
                     update_lower_lex(obj_index, best, is_maximize);
                     break;
                 }

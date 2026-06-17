@@ -339,7 +339,10 @@ namespace {
         best_blocker = expr_ref(m);
         bool found_best = false;
 
+        expr_ref best_bound(m);
+        best_bound = mk_ge(obj_index, best_value);
         expr_ref_vector enum_asms(m);
+        enum_asms.push_back(best_bound);
         enum_asms.append(base_assumptions);
         if (!contains_expr(enum_asms, bound_selector))
             enum_asms.push_back(bound_selector);
@@ -376,30 +379,6 @@ namespace {
                     continue;
                 }
 
-                /*
-                // 对该 core 做“单点禁用”分支评估：
-                // 每个分支禁用 core 中一个 selector（其余保持true），并固定 bound=false
-                for (expr* drop_sel : core_without_bound) {
-                    expr_ref_vector eval_asms(m);
-
-                    eval_asms.push_back(m.mk_not(bound_selector));
-
-                    for (expr* a : base_assumptions) {
-                        if (a == drop_sel) continue; 
-                        eval_asms.push_back(a);
-                    }
-
-                    for (expr* s : core_without_bound) {
-                        if (s == drop_sel) continue;
-                        if (!contains_expr(eval_asms, s))
-                            eval_asms.push_back(s);
-                    }
-                    eval_asms.push_back(m.mk_not(drop_sel));
-                
-                    lbool rs = check_sat(eval_asms.size(), eval_asms.data());
-                    if (rs != l_true)
-                        continue;
-                */
                 lbool rs = check_sat(core_without_bound.size(), core_without_bound.data());
                 if (rs != l_true)
                     continue;
@@ -420,21 +399,25 @@ namespace {
                 );    
                 if (v > best_value) {
                     TRACE(opt, 
-                        tout << "update best from " << v << " to " << best_value << "\n";
+                        tout << "update best from " << best_value << " to " << v << "\n";
                     );
                     found_best = true;
-                    best_value = v;
+                    best_value = v;                    
                     best_blocker = blk;
+                    best_bound = mk_ge(obj_index, best_value);
+                    enum_asms[0] = best_bound;
                 }
                 // }
 
                 expr_ref_vector block_disj(m);
                 block_disj.push_back(m.mk_not(bound_selector));
                 for (expr* s : core_without_bound)
-                    block_disj.push_back(m.mk_not(s));
+                    if (s != best_bound)
+                        block_disj.push_back(m.mk_not(s));
 
-                enum_asms.push_back(m.mk_or(block_disj));
+                assert_expr(m.mk_or(block_disj));
             }
+            get_lra_conflict_cores(cores);
             r = check_sat(enum_asms.size(), enum_asms.data());
         }
 

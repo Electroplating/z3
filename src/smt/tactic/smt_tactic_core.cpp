@@ -450,7 +450,7 @@ tactic * mk_smt_tactic_core_using(ast_manager& m, bool auto_config, params_ref c
     params_ref p = _p;
     p.set_bool("auto_config", auto_config);
     tactic *t = nullptr;
-    if (pp.enable() || pp.enable2())
+    if (pp.enable() /*|| pp.enable2()*/)
         t = mk_parallel_smt_tactic(m, p);
     else
         t = mk_seq_smt_tactic(m, p);
