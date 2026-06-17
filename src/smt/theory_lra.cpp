@@ -3599,6 +3599,29 @@ public:
         set_conflict_or_lemma(core, true);
     }
 
+    literal_vector m_last_conflict_core;
+
+    bool get_last_conflict_core(expr_ref_vector& out){
+        out.reset();
+        if (m_last_conflict_core.empty()) {
+            TRACE(arith_conflict,
+                    tout << "no conflict core\n";);
+            return false;
+        }
+        for (literal lit : m_last_conflict_core) {
+            auto e = ctx().literal2expr(lit);
+            if (e){
+                out.push_back(e);
+            }
+        }
+        TRACE(arith_conflict,
+                tout << "get-conflict-core:" << "\n";
+                for (auto const& lit : out) tout << mk_pp(lit, m) << "\n";
+                tout << "\n";);
+        m_last_conflict_core.reset();
+        return true;
+    }
+
     void set_conflict_or_lemma(literal_vector const& core, bool is_conflict) {
         reset_evidence();
         for (literal lit : core) {
@@ -3622,6 +3645,8 @@ public:
             dump_conflict();
 
         if (is_conflict) {
+            m_last_conflict_core.reset();
+            m_last_conflict_core.append(m_core);
             ctx().set_conflict(
                 ctx().mk_justification(
                     ext_theory_conflict_justification(
@@ -3630,6 +3655,7 @@ public:
                         m_eqs.size(), m_eqs.data(), m_params.size(), m_params.data())));
         }
         else {
+            m_last_conflict_core.reset();
             for (auto const& [n1, n2] : m_eqs) {
                 m_core.push_back(th.mk_eq(n1->get_expr(), n2->get_expr(), false));
             }
@@ -4530,6 +4556,10 @@ theory_var theory_lra::add_objective(app* term) {
 }
 expr_ref theory_lra::mk_ge(generic_model_converter& fm, theory_var v, inf_rational const& val) {
     return m_imp->mk_ge(fm, v, val);
+}
+
+bool theory_lra::get_last_conflict_core(expr_ref_vector& out){
+    return m_imp->get_last_conflict_core(out);
 }
 
 void theory_lra::setup() {

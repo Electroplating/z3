@@ -118,6 +118,7 @@ namespace smt {
         inf_eps value(theory_var) override;
         inf_eps maximize(theory_var v, expr_ref& blocker, bool& has_shared) override;
         theory_var add_objective(app* term) override;
+        bool get_last_conflict_core(expr_ref_vector& out);
     };
 
 }

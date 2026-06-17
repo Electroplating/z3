@@ -298,6 +298,167 @@ namespace opt {
        Precondition: the state of the solver is satisfiable and such that a current model can be extracted.
        
     */
+    bool opt_solver::get_lra_last_conflict_core(expr_ref_vector& core) {
+        core.reset();
+        smt::context& ctx = m_context.get_context();
+        smt::theory_id arith_id = m_context.m().get_family_id("arith");
+        smt::theory* th = ctx.get_theory(arith_id);
+        auto* lra = dynamic_cast<smt::theory_lra*>(th);
+        if (!lra)
+            return false; 
+        return lra->get_last_conflict_core(core);
+    }
+
+namespace {
+    bool contains_expr(expr_ref_vector const& v, expr* e) {
+        for (expr* x : v) if (x == e) return true;
+        return false;
+    }
+
+    expr_ref mk_or(ast_manager& m, expr_ref_vector const& lits) {
+        if (lits.empty()) return expr_ref(m.mk_false(), m);
+        ptr_buffer<expr> args;
+        for (expr* e : lits) args.push_back(e);
+        return expr_ref(m.mk_or(args.size(), args.data()), m);
+    }
+}
+    bool opt_solver::maximize_objective_fast(unsigned i, expr_ref& blocker, inf_eps& value) {
+        if (i >= m_objective_vars.size())
+            return false;
+
+        bool has_shared = true;
+        blocker = nullptr;
+
+        value = get_optimizer().maximize(m_objective_vars[i], blocker, has_shared);
+
+        if (i < m_objective_values.size() && value > m_objective_values[i])
+            m_objective_values[i] = value;
+
+        m_context.get_model(m_last_model);
+        if (m_last_model && i < m_models.size() && !m_models[i])
+            m_models.set(i, m_last_model.get());
+
+        return true;
+    }
+
+    bool opt_solver::best_value_after_bound_unsat(
+        unsigned obj_index,
+        expr* bound_selector,
+        expr_ref_vector const& base_assumptions,
+        inf_eps& best_value,
+        expr_ref& best_blocker,
+        unsigned max_cores
+    ) 
+    {
+        TRACE(opt, 
+            tout << "objective " << obj_index << ":" << "\n";
+            tout << "unsat bound" << mk_pp(bound_selector, m) << "\n";
+            tout << "last best value: " << best_value << "\n";
+        );
+        if (!bound_selector || obj_index >= m_objective_vars.size())
+            return false;
+
+        solver::scoped_push _push(*this); 
+
+        best_blocker = expr_ref(m);
+        bool found_best = false;
+
+        expr_ref_vector enum_asms(m);
+        enum_asms.append(base_assumptions);
+        if (!contains_expr(enum_asms, bound_selector))
+            enum_asms.push_back(bound_selector);
+
+        lbool r = check_sat(enum_asms.size(), enum_asms.data());
+        if (r != l_false) {
+            return false;
+        }
+
+        for (unsigned core_round = 0; core_round < max_cores && r == l_false; ++core_round) {
+            expr_ref_vector core(m);
+            // get_unsat_core(core);
+            get_lra_last_conflict_core(core);
+
+            TRACE(opt, 
+                tout << "unsat core:" << "\n";
+                for (expr* c : core) {
+                    if (c != bound_selector)
+                        tout << mk_pp(c, m) << "\n";
+                }
+            );
+            expr_ref_vector core_without_bound(m);
+            for (expr* c : core) {
+                if (c != bound_selector)
+                    core_without_bound.push_back(c);
+            }
+
+            if (core_without_bound.empty()) {
+                TRACE(opt, display(tout); );
+                break;
+            }
+
+            /*
+            // 对该 core 做“单点禁用”分支评估：
+            // 每个分支禁用 core 中一个 selector（其余保持true），并固定 bound=false
+            for (expr* drop_sel : core_without_bound) {
+                expr_ref_vector eval_asms(m);
+
+                eval_asms.push_back(m.mk_not(bound_selector));
+
+                for (expr* a : base_assumptions) {
+                    if (a == drop_sel) continue; 
+                    eval_asms.push_back(a);
+                }
+
+                for (expr* s : core_without_bound) {
+                    if (s == drop_sel) continue;
+                    if (!contains_expr(eval_asms, s))
+                        eval_asms.push_back(s);
+                }
+                eval_asms.push_back(m.mk_not(drop_sel));
+            
+                lbool rs = check_sat(eval_asms.size(), eval_asms.data());
+                if (rs != l_true)
+                    continue;
+            */
+            lbool rs = check_sat(core_without_bound.size(), core_without_bound.data());
+            if (rs != l_true)
+                continue;
+            expr_ref blk(m);
+            inf_eps v;
+            if (!maximize_objective_fast(obj_index, blk, v))
+                continue;
+
+            TRACE(opt, 
+                tout << "eval result: " << v << "\n";
+                tout << "eval core:" << "\n";
+                for (expr* c : core_without_bound) {
+                    if (c != bound_selector)
+                        tout << mk_pp(c, m) << "\n";
+                }
+            );    
+            if (v > best_value) {
+                TRACE(opt, 
+                    tout << "update best from " << v << " to " << best_value << "\n";
+                );
+                found_best = true;
+                best_value = v;
+                best_blocker = blk;
+            }
+            // }
+
+            expr_ref_vector block_disj(m);
+            block_disj.push_back(m.mk_not(bound_selector));
+            for (expr* s : core_without_bound)
+                block_disj.push_back(m.mk_not(s));
+
+            assert_expr(mk_or(m, block_disj));
+
+            r = check_sat(enum_asms.size(), enum_asms.data());
+        }
+
+        return found_best;
+    }
+
     bool opt_solver::maximize_objective(unsigned i, expr_ref& blocker) {
         smt::theory_var v = m_objective_vars[i];
         bool has_shared = false;

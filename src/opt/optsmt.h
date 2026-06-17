@@ -38,6 +38,7 @@ namespace opt {
         expr_ref_vector  m_lower_fmls;
         svector<smt::theory_var> m_vars;
         symbol           m_optsmt_engine;
+        bool             m_geometric_over_bound = false;
         model_ref        m_model, m_best_model;
         svector<symbol>  m_labels;
         sref_vector<model> m_models;

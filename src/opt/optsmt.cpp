@@ -222,83 +222,143 @@ namespace opt {
         unsigned num_scopes = 0;
         inf_eps last_objective = inf_eps(rational(-1), inf_rational(0));
 
-        while (m.inc()) {
-            SASSERT(delta_per_step.is_int());
-            SASSERT(delta_per_step.is_pos());
-            is_sat = m_s->check_sat(0, nullptr);
-            TRACE(opt, tout << "check " << is_sat << "\n";
-                  tout << "last bound: " << last_bound << " bound " << bound << "\n";
-                  tout << "lower: " << m_lower[obj_index] << "\n";
-                  tout << "upper: " << m_upper[obj_index] << "\n";
-                  if (is_sat == l_true) m_s->display(tout);
-                  );
-            if (is_sat == l_true) {                
-                m_s->maximize_objective(obj_index, bound);
-                m_s->get_model(m_model);
-                SASSERT(m_model);
-                inf_eps obj = m_s->saved_objective_value(obj_index);
-                TRACE(opt, tout << "saved objective: " << obj << "\n";);
-                update_lower_lex(obj_index, obj, is_maximize);
-                if (!is_int || !m_lower[obj_index].is_finite()) {
-                    delta_per_step = rational(1);
+        if (!m_geometric_over_bound) {
+            while (m.inc()) {
+                SASSERT(delta_per_step.is_int());
+                SASSERT(delta_per_step.is_pos());
+                is_sat = m_s->check_sat(0, nullptr);
+                TRACE(opt, tout << "check " << is_sat << "\n";
+                    tout << "last bound: " << last_bound << " bound " << bound << "\n";
+                    tout << "lower: " << m_lower[obj_index] << "\n";
+                    tout << "upper: " << m_upper[obj_index] << "\n";
+                    if (is_sat == l_true) m_s->display(tout);
+                    );
+                if (is_sat == l_true) {                
+                    m_s->maximize_objective(obj_index, bound);
+                    m_s->get_model(m_model);
+                    SASSERT(m_model);
+                    inf_eps obj = m_s->saved_objective_value(obj_index);
+                    TRACE(opt, tout << "saved objective: " << obj << "\n";);
+                    update_lower_lex(obj_index, obj, is_maximize);
+                    if (!is_int || !m_lower[obj_index].is_finite()) {
+                        delta_per_step = rational(1);
+                    }
+                    else if (steps > step_incs) {
+                        delta_per_step *= rational(2);
+                        ++step_incs;
+                        steps = 0;
+                    }
+                    else {
+                        ++steps;
+                    }
+                    if (delta_per_step > rational::one() || (obj == last_objective && is_int)) {
+                        m_s->push();
+                        ++num_scopes;
+                        bound = m_s->mk_ge(obj_index, obj + inf_eps(delta_per_step));
+                    }
+                    last_objective = obj;
+                    if (bound == last_bound) {
+                        // LP didn't produce a new blocker. If the model-based lower bound
+                        // is strictly better than what the LP found, use it to push the LP
+                        // further. This handles cases where nonlinear constraints, mod,
+                        // to_int, prevent the LP from seeing the full feasible region.
+                        if (m_lower[obj_index].is_finite() && m_lower[obj_index] > obj)
+                            bound = m_s->mk_ge(obj_index, m_lower[obj_index]);
+                        if (bound == last_bound)
+                            break;
+                    }
+                    m_s->assert_expr(bound);
+                    last_bound = bound;
                 }
-                else if (steps > step_incs) {
-                    delta_per_step *= rational(2);
-                    ++step_incs;
+                else if (is_sat == l_false && delta_per_step > rational::one()) {
                     steps = 0;
+                    step_incs = 0;
+                    delta_per_step = rational::one();
+                    SASSERT(num_scopes > 0);
+                    --num_scopes;
+                    m_s->pop(1);                             
                 }
                 else {
-                    ++steps;
+                    break;
                 }
-                if (delta_per_step > rational::one() || (obj == last_objective && is_int)) {
-                    m_s->push();
-                    ++num_scopes;
-                    bound = m_s->mk_ge(obj_index, obj + inf_eps(delta_per_step));
-                }
-                last_objective = obj;
-                if (bound == last_bound) {
-                    // LP didn't produce a new blocker. If the model-based lower bound
-                    // is strictly better than what the LP found, use it to push the LP
-                    // further. This handles cases where nonlinear constraints, mod,
-                    // to_int, prevent the LP from seeing the full feasible region.
-                    if (m_lower[obj_index].is_finite() && m_lower[obj_index] > obj)
-                        bound = m_s->mk_ge(obj_index, m_lower[obj_index]);
-                    if (bound == last_bound)
+            }
+            m_s->pop(num_scopes);        
+
+            TRACE(opt, tout << is_sat << " " << num_scopes << "\n";);
+
+            if (is_sat == l_false && !m_model) {
+                return l_false;
+            }
+            
+            if (!m.inc() || is_sat == l_undef) {
+                return l_undef;
+            }
+
+            // set the solution tight.
+            m_upper[obj_index] = m_lower[obj_index];    
+            if (!is_box)
+                for (unsigned i = obj_index+1; i < m_lower.size(); ++i)
+                    m_lower[i] = inf_eps(rational(-1), inf_rational(0));
+            return l_true;
+        }
+        else
+        {
+            while (m.inc()) {
+                SASSERT(delta_per_step.is_int());
+                SASSERT(delta_per_step.is_pos());
+
+                // pre-check
+                if (last_objective == inf_eps(rational(-1), inf_rational(0))) {
+                    is_sat = m_s->check_sat(0, nullptr);
+                    if (is_sat != l_true) {
                         break;
+                    }
+                    last_objective = m_lower[obj_index];
+                    TRACE(opt, tout << "check " << is_sat << "\n";
+                            tout << "last bound: " << last_bound << " bound " << bound << "\n";
+                            tout << "lower: " << m_lower[obj_index] << "\n";
+                            tout << "upper: " << m_upper[obj_index] << "\n";
+                            if (is_sat == l_true) m_s->display(tout);
+                        );
                 }
-                m_s->assert_expr(bound);
-                last_bound = bound;
+                bound = m_s->mk_ge(obj_index, last_objective);
+                expr* asms[1] = { bound };
+                lbool check = m_s->check_sat(1, asms);
+                if (check == l_true) {
+                    last_objective *= rational(2);
+                    continue;
+                }
+                else if (check == l_false) {
+                    inf_eps best = last_objective / rational(2);
+                    expr_ref best_blk(m);
+                    expr_ref_vector base_asms(m);
+                    while (m_s->best_value_after_bound_unsat(obj_index, bound, base_asms, best, best_blk, 32));
+                    update_lower_lex(obj_index, best, is_maximize);
+                    break;
+                }
+                else {
+                    break;
+                }    
             }
-            else if (is_sat == l_false && delta_per_step > rational::one()) {
-                steps = 0;
-                step_incs = 0;
-                delta_per_step = rational::one();
-                SASSERT(num_scopes > 0);
-                --num_scopes;
-                m_s->pop(1);                             
+            m_s->pop(num_scopes);        
+
+            TRACE(opt, tout << is_sat << " " << num_scopes << "\n";);
+
+            if (is_sat == l_false && !m_model) {
+                return l_false;
             }
-            else {
-                break;
+            
+            if (!m.inc() || is_sat == l_undef) {
+                return l_undef;
             }
-        }
-        m_s->pop(num_scopes);        
 
-        TRACE(opt, tout << is_sat << " " << num_scopes << "\n";);
-
-        if (is_sat == l_false && !m_model) {
-            return l_false;
+            // set the solution tight.
+            m_upper[obj_index] = m_lower[obj_index];    
+            if (!is_box)
+                for (unsigned i = obj_index+1; i < m_lower.size(); ++i)
+                    m_lower[i] = inf_eps(rational(-1), inf_rational(0));
+            return l_true;
         }
-        
-        if (!m.inc() || is_sat == l_undef) {
-            return l_undef;
-        }
-
-        // set the solution tight.
-        m_upper[obj_index] = m_lower[obj_index];    
-        if (!is_box)
-            for (unsigned i = obj_index+1; i < m_lower.size(); ++i)
-                m_lower[i] = inf_eps(rational(-1), inf_rational(0));
-        return l_true;
     }
 
     bool optsmt::can_increment_delta(vector<inf_eps> const& lower, unsigned i) {
@@ -605,7 +665,8 @@ namespace opt {
 
     void optsmt::updt_params(params_ref& p) {
         opt_params _p(p);
-        m_optsmt_engine = _p.optsmt_engine();        
+        m_optsmt_engine = _p.optsmt_engine();   
+        m_geometric_over_bound = _p.geometric_lex_over_bound();
     }
 
     void optsmt::reset() {

@@ -165,6 +165,16 @@ namespace opt {
 
         smt::theory_var add_objective(app* term);
         void reset_objectives();
+        bool get_lra_last_conflict_core(expr_ref_vector& core);
+        bool maximize_objective_fast(unsigned i, expr_ref& blocker, inf_eps& value);
+        bool best_value_after_bound_unsat(
+            unsigned obj_index,
+            expr* bound_selector,
+            expr_ref_vector const& base_assumptions,
+            inf_eps& best_value,
+            expr_ref& best_blocker,
+            unsigned max_cores = 32
+        );
         bool maximize_objective(unsigned i, expr_ref& blocker);
         bool maximize_objectives1(expr_ref_vector& blockers);
         bool maximize_objective_isolated(unsigned i, model_ref& baseline_model, expr_ref& blocker);
