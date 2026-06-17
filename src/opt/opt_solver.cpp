@@ -298,15 +298,15 @@ namespace opt {
        Precondition: the state of the solver is satisfiable and such that a current model can be extracted.
        
     */
-    bool opt_solver::get_lra_last_conflict_core(expr_ref_vector& core) {
-        core.reset();
+    bool opt_solver::get_lra_conflict_cores(vector<expr_ref_vector> &cores) {
+        cores.reset();
         smt::context& ctx = m_context.get_context();
         smt::theory_id arith_id = m_context.m().get_family_id("arith");
         smt::theory* th = ctx.get_theory(arith_id);
         auto* lra = dynamic_cast<smt::theory_lra*>(th);
         if (!lra)
             return false; 
-        return lra->get_last_conflict_core(core);
+        return lra->get_conflict_cores(cores);
     }
 
 namespace {
@@ -373,86 +373,90 @@ namespace {
             return false;
         }
 
-        for (unsigned core_round = 0; core_round < max_cores && r == l_false; ++core_round) {
-            expr_ref_vector core(m);
+        for (unsigned core_round = 0; core_round < max_cores && r == l_false;) {
+            vector<expr_ref_vector> cores;
             // get_unsat_core(core);
-            get_lra_last_conflict_core(core);
-
-            TRACE(opt, 
-                tout << "unsat core:" << "\n";
-                for (expr* c : core) {
-                    if (c != bound_selector)
-                        tout << mk_pp(c, m) << "\n";
-                }
-            );
-            expr_ref_vector core_without_bound(m);
-            for (expr* c : core) {
-                if (c != bound_selector)
-                    core_without_bound.push_back(c);
-            }
-
-            if (core_without_bound.empty()) {
-                TRACE(opt, display(tout); );
+            get_lra_conflict_cores(cores);
+            if (cores.empty()) {
+                TRACE(opt, tout << "no conflict cores returned\n";);
                 break;
             }
-
-            /*
-            // 对该 core 做“单点禁用”分支评估：
-            // 每个分支禁用 core 中一个 selector（其余保持true），并固定 bound=false
-            for (expr* drop_sel : core_without_bound) {
-                expr_ref_vector eval_asms(m);
-
-                eval_asms.push_back(m.mk_not(bound_selector));
-
-                for (expr* a : base_assumptions) {
-                    if (a == drop_sel) continue; 
-                    eval_asms.push_back(a);
+            for (const auto& core : cores) {
+                ++core_round;
+                TRACE(opt, 
+                    tout << "unsat core:" << "\n";
+                    for (expr* c : core) {
+                        if (c != bound_selector)
+                            tout << mk_pp(c, m) << "\n";
+                    }
+                );
+                expr_ref_vector core_without_bound(m);
+                for (expr* c : core) {
+                    if (c != bound_selector)
+                        core_without_bound.push_back(c);
                 }
 
-                for (expr* s : core_without_bound) {
-                    if (s == drop_sel) continue;
-                    if (!contains_expr(eval_asms, s))
-                        eval_asms.push_back(s);
+                if (core_without_bound.empty()) {
+                    continue;
                 }
-                eval_asms.push_back(m.mk_not(drop_sel));
-            
-                lbool rs = check_sat(eval_asms.size(), eval_asms.data());
+
+                /*
+                // 对该 core 做“单点禁用”分支评估：
+                // 每个分支禁用 core 中一个 selector（其余保持true），并固定 bound=false
+                for (expr* drop_sel : core_without_bound) {
+                    expr_ref_vector eval_asms(m);
+
+                    eval_asms.push_back(m.mk_not(bound_selector));
+
+                    for (expr* a : base_assumptions) {
+                        if (a == drop_sel) continue; 
+                        eval_asms.push_back(a);
+                    }
+
+                    for (expr* s : core_without_bound) {
+                        if (s == drop_sel) continue;
+                        if (!contains_expr(eval_asms, s))
+                            eval_asms.push_back(s);
+                    }
+                    eval_asms.push_back(m.mk_not(drop_sel));
+                
+                    lbool rs = check_sat(eval_asms.size(), eval_asms.data());
+                    if (rs != l_true)
+                        continue;
+                */
+                lbool rs = check_sat(core_without_bound.size(), core_without_bound.data());
                 if (rs != l_true)
                     continue;
-            */
-            lbool rs = check_sat(core_without_bound.size(), core_without_bound.data());
-            if (rs != l_true)
-                continue;
-            expr_ref blk(m);
-            inf_eps v;
-            if (!maximize_objective_fast(obj_index, blk, v))
-                continue;
+                expr_ref blk(m);
+                inf_eps v;
+                if (!maximize_objective_fast(obj_index, blk, v))
+                    continue;
 
-            TRACE(opt, 
-                tout << "eval result: " << v << "\n";
-                tout << "eval core:" << "\n";
-                for (expr* c : core_without_bound) {
-                    if (c != bound_selector)
-                        tout << mk_pp(c, m) << "\n";
-                }
-            );    
-            if (v > best_value) {
                 TRACE(opt, 
-                    tout << "update best from " << v << " to " << best_value << "\n";
-                );
-                found_best = true;
-                best_value = v;
-                best_blocker = blk;
+                    tout << "eval result: " << v << "\n";
+                    tout << "eval core:" << "\n";
+                    for (expr* c : core_without_bound) {
+                        if (c != bound_selector)
+                            tout << mk_pp(c, m) << "\n";
+                    }
+                );    
+                if (v > best_value) {
+                    TRACE(opt, 
+                        tout << "update best from " << v << " to " << best_value << "\n";
+                    );
+                    found_best = true;
+                    best_value = v;
+                    best_blocker = blk;
+                }
+                // }
+
+                expr_ref_vector block_disj(m);
+                block_disj.push_back(m.mk_not(bound_selector));
+                for (expr* s : core_without_bound)
+                    block_disj.push_back(m.mk_not(s));
+
+                assert_expr(mk_or(m, block_disj));
             }
-            // }
-
-            expr_ref_vector block_disj(m);
-            block_disj.push_back(m.mk_not(bound_selector));
-            for (expr* s : core_without_bound)
-                block_disj.push_back(m.mk_not(s));
-
-            assert_expr(mk_or(m, block_disj));
-
             r = check_sat(enum_asms.size(), enum_asms.data());
         }
 

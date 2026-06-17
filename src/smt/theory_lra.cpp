@@ -3599,26 +3599,35 @@ public:
         set_conflict_or_lemma(core, true);
     }
 
-    literal_vector m_last_conflict_core;
+    vector<literal_vector> m_conflict_cores;
 
-    bool get_last_conflict_core(expr_ref_vector& out){
+    bool get_conflict_cores(vector<expr_ref_vector> &out){
         out.reset();
-        if (m_last_conflict_core.empty()) {
+        if (m_conflict_cores.empty()) {
             TRACE(arith_conflict,
-                    tout << "no conflict core\n";);
+                    tout << "no conflict cores\n";);
             return false;
         }
-        for (literal lit : m_last_conflict_core) {
-            auto e = ctx().literal2expr(lit);
-            if (e){
-                out.push_back(e);
+        for (const auto& core : m_conflict_cores) {
+            expr_ref_vector ev(m);
+            for (literal lit : core) {
+                auto e = ctx().literal2expr(lit);
+                if (e){
+                    ev.push_back(e);
+                }
             }
+            out.push_back(ev);
         }
         TRACE(arith_conflict,
-                tout << "get-conflict-core:" << "\n";
-                for (auto const& lit : out) tout << mk_pp(lit, m) << "\n";
+                tout << "get-conflict-cores:" << "\n";
+                for (auto const& ev : out)
+                {
+                    for (auto const& e : ev)
+                        tout << mk_pp(e, m) << "\n";
+                    tout << "\n";
+                }    
                 tout << "\n";);
-        m_last_conflict_core.reset();
+        m_conflict_cores.reset();
         return true;
     }
 
@@ -3645,8 +3654,7 @@ public:
             dump_conflict();
 
         if (is_conflict) {
-            m_last_conflict_core.reset();
-            m_last_conflict_core.append(m_core);
+            m_conflict_cores.push_back(m_core);
             ctx().set_conflict(
                 ctx().mk_justification(
                     ext_theory_conflict_justification(
@@ -3655,7 +3663,6 @@ public:
                         m_eqs.size(), m_eqs.data(), m_params.size(), m_params.data())));
         }
         else {
-            m_last_conflict_core.reset();
             for (auto const& [n1, n2] : m_eqs) {
                 m_core.push_back(th.mk_eq(n1->get_expr(), n2->get_expr(), false));
             }
@@ -4558,8 +4565,8 @@ expr_ref theory_lra::mk_ge(generic_model_converter& fm, theory_var v, inf_ration
     return m_imp->mk_ge(fm, v, val);
 }
 
-bool theory_lra::get_last_conflict_core(expr_ref_vector& out){
-    return m_imp->get_last_conflict_core(out);
+bool theory_lra::get_conflict_cores(vector<expr_ref_vector> &cores){
+    return m_imp->get_conflict_cores(cores);
 }
 
 void theory_lra::setup() {

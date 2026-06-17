@@ -165,7 +165,7 @@ namespace opt {
 
         smt::theory_var add_objective(app* term);
         void reset_objectives();
-        bool get_lra_last_conflict_core(expr_ref_vector& core);
+        bool get_lra_conflict_cores(vector<expr_ref_vector> &cores);
         bool maximize_objective_fast(unsigned i, expr_ref& blocker, inf_eps& value);
         bool best_value_after_bound_unsat(
             unsigned obj_index,
