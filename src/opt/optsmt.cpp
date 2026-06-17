@@ -332,7 +332,7 @@ namespace opt {
                     continue;
                 }
                 else if (check == l_false) {
-                    inf_eps best = last_objective / rational(2);
+                    inf_eps best = last_objective - delta_per_step;
                     expr_ref best_blk(m);
                     expr_ref_vector base_asms(m);
                     while (m_s->best_value_after_bound_unsat(obj_index, bound, base_asms, best, best_blk, 32));
