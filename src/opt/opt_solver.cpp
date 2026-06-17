@@ -22,6 +22,7 @@ Notes:
 #include "ast/reg_decl_plugins.h"
 #include "opt/opt_solver.h"
 #include "smt/smt_context.h"
+#include "smt/smt_literal.h"
 #include "smt/theory_arith.h"
 #include "smt/theory_diff_logic.h"
 #include "smt/theory_dense_diff_logic.h"
@@ -314,32 +315,7 @@ namespace {
         for (expr* x : v) if (x == e) return true;
         return false;
     }
-
-    expr_ref mk_or(ast_manager& m, expr_ref_vector const& lits) {
-        if (lits.empty()) return expr_ref(m.mk_false(), m);
-        ptr_buffer<expr> args;
-        for (expr* e : lits) args.push_back(e);
-        return expr_ref(m.mk_or(args.size(), args.data()), m);
-    }
 }
-    bool opt_solver::maximize_objective_fast(unsigned i, expr_ref& blocker, inf_eps& value) {
-        if (i >= m_objective_vars.size())
-            return false;
-
-        bool has_shared = true;
-        blocker = nullptr;
-
-        value = get_optimizer().maximize(m_objective_vars[i], blocker, has_shared);
-
-        if (i < m_objective_values.size() && value > m_objective_values[i])
-            m_objective_values[i] = value;
-
-        m_context.get_model(m_last_model);
-        if (m_last_model && i < m_models.size() && !m_models[i])
-            m_models.set(i, m_last_model.get());
-
-        return true;
-    }
 
     bool opt_solver::best_value_after_bound_unsat(
         unsigned obj_index,
@@ -368,13 +344,13 @@ namespace {
         if (!contains_expr(enum_asms, bound_selector))
             enum_asms.push_back(bound_selector);
 
+        vector<expr_ref_vector> cores;
         lbool r = check_sat(enum_asms.size(), enum_asms.data());
         if (r != l_false) {
             return false;
         }
 
         for (unsigned core_round = 0; core_round < max_cores && r == l_false;) {
-            vector<expr_ref_vector> cores;
             // get_unsat_core(core);
             get_lra_conflict_cores(cores);
             if (cores.empty()) {
@@ -429,7 +405,7 @@ namespace {
                     continue;
                 expr_ref blk(m);
                 inf_eps v;
-                if (!maximize_objective_fast(obj_index, blk, v))
+                if (!eval_conflict_core(obj_index, core_without_bound, bound_selector, v, blk))
                     continue;
 
                 TRACE(opt, 
@@ -439,6 +415,8 @@ namespace {
                         if (c != bound_selector)
                             tout << mk_pp(c, m) << "\n";
                     }
+                    tout << "model:" << "\n";
+                    display(tout);
                 );    
                 if (v > best_value) {
                     TRACE(opt, 
@@ -455,12 +433,48 @@ namespace {
                 for (expr* s : core_without_bound)
                     block_disj.push_back(m.mk_not(s));
 
-                assert_expr(mk_or(m, block_disj));
+                enum_asms.push_back(m.mk_or(block_disj));
             }
             r = check_sat(enum_asms.size(), enum_asms.data());
         }
 
         return found_best;
+    }
+    bool opt_solver::eval_conflict_core(unsigned obj_index,
+                                         expr_ref_vector const& core_exprs,
+                                         expr* bound_expr,
+                                         inf_eps& value,
+                                         expr_ref& blocker) {
+        if (obj_index >= m_objective_vars.size() || !bound_expr) return false;
+
+        smt::context& c = m_context.get_context();
+        auto arith_id = m_context.m().get_family_id("arith");
+        auto* th = c.get_theory(arith_id);
+        auto* lra = dynamic_cast<smt::theory_lra*>(th);
+        if (!lra) return false;
+
+        smt::literal_vector core_lits;
+        for (expr* e : core_exprs) {
+            if (!e) continue;
+            if (m.is_not(e)) {
+                expr* a = to_app(e)->get_arg(0);
+                core_lits.push_back(~c.get_literal(a));
+            }
+            else {
+                core_lits.push_back(c.get_literal(e));
+            }
+        }
+
+        smt::literal bound_lit;
+        if (m.is_not(bound_expr)) {
+            expr* a = to_app(bound_expr)->get_arg(0);
+            bound_lit = ~c.get_literal(a);
+        }
+        else {
+            bound_lit = c.get_literal(bound_expr);
+        }
+
+        return lra->eval_core(core_lits, bound_lit, m_objective_vars[obj_index], value, blocker);
     }
 
     bool opt_solver::maximize_objective(unsigned i, expr_ref& blocker) {

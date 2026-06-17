@@ -119,6 +119,7 @@ namespace smt {
         inf_eps maximize(theory_var v, expr_ref& blocker, bool& has_shared) override;
         theory_var add_objective(app* term) override;
         bool get_conflict_cores(vector<expr_ref_vector> &cores);
+        bool eval_core(literal_vector const& core, literal const& bound_lit, theory_var obj, inf_eps& value, expr_ref& blocker);
     };
 
 }

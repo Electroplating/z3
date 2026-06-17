@@ -3599,6 +3599,62 @@ public:
         set_conflict_or_lemma(core, true);
     }
 
+    bool eval_core(literal_vector const& core,
+                    literal bound_lit,
+                    theory_var obj,
+                    inf_eps& value,
+                    expr_ref& blocker) {
+        push_scope_eh();
+
+        for (literal lit : core) {
+            if (lit == bound_lit) {
+                continue;
+            }
+
+            api_bound* b = nullptr;
+            if (!m_bool_var2bound.find(lit.var(), b)) {
+                continue; 
+            }
+
+            bool is_true = !lit.sign();
+            if (!assert_bound(lit.var(), is_true, *b)) {
+                {
+                    pop_scope_eh(1);
+                    return false;
+                }
+            }
+        }
+
+        if (make_feasible() != l_true) {
+            pop_scope_eh(1);
+            return false;
+        }
+
+        bool has_shared = true;
+        value = maximize(obj, blocker, has_shared);
+        TRACE(opt, 
+            tout << "[lra-max] obj-var v" << obj << "\n";
+            if (is_registered_var(obj)) {
+                auto j = get_lpvar(obj);
+                tout << "[lra-max] lpvar=" << j
+                    << " value=" << lp().get_value(j) << "\n";
+            }
+            tout << "[lra-max] non-zero columns:\n";
+            for (unsigned j = 0; j < lp().column_count(); ++j) {
+                auto cv = lp().get_column_value(j);
+                if (!cv.is_zero()) {
+                    tout << "  col[" << j << "]=" << cv;
+                    theory_var tv = lp().local_to_external(j);
+                    if (tv >= 0 && get_enode(tv))
+                        tout << "  expr=" << mk_pp(get_enode(tv)->get_expr(), m);
+                    tout << "\n";
+                }
+            }
+        );
+        pop_scope_eh(1);
+        return true;
+    }
+
     vector<literal_vector> m_conflict_cores;
 
     bool get_conflict_cores(vector<expr_ref_vector> &out){
@@ -4567,6 +4623,10 @@ expr_ref theory_lra::mk_ge(generic_model_converter& fm, theory_var v, inf_ration
 
 bool theory_lra::get_conflict_cores(vector<expr_ref_vector> &cores){
     return m_imp->get_conflict_cores(cores);
+}
+
+bool theory_lra::eval_core(literal_vector const& core, literal const& bound_lit, theory_var obj, inf_eps& value, expr_ref& blocker){
+    return m_imp->eval_core(core, bound_lit, obj, value, blocker);
 }
 
 void theory_lra::setup() {
